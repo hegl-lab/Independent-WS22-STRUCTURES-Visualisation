@@ -1,0 +1,667 @@
+<!-- Written by Ricardo Waibel; ITP and HEGL, Heidelberg -->
+
+<!DOCTYPE html>
+<html>
+	<head>
+		<meta charset="utf-8">
+		<meta name="viewport" content="width=device-width, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0">
+		<title>Disc Deformation</title>
+		<link type="text/css" rel="stylesheet" href="main.css">
+		<style>
+			.label {
+				color: #FFF;
+				font-family: sans-serif;
+				/* padding: 2px; */
+				background: rgba(0, 0, 0, 0);
+			}
+
+			.author {
+				position: fixed;
+				bottom: 15px;
+				right: 30px;
+				/* transform: translate(-50%, -50%); */
+				font-size: 0.8vw;
+				font-family: 'Oswald', sans-serif;
+				color: white;
+				text-align: right;
+				z-index: 100;
+			}
+
+		</style>
+	</head>
+	<body>
+
+		<!-- Import maps polyfill -->
+		<!-- Remove this when import maps will be widely supported -->
+		<script async src="https://unpkg.com/es-module-shims@1.3.6/dist/es-module-shims.js"></script>
+
+		<script type="importmap">
+			{
+				"imports": {
+					"three": "../js/three.module.js",
+					"three/addons/": "../js/jsm/"
+				}
+			}
+		</script>
+
+		<script type="module">
+
+			import * as THREE from 'three';
+			import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+			import { ParametricGeometry } from '../js/jsm/geometries/ParametricGeometry.js';
+			import Stats from '../js/jsm/libs/stats.module.js';
+			import { GUI } from 'three/addons/libs/lil-gui.module.min.js';
+
+			let gui;
+
+			let camera, scene, renderer;
+
+			let stats;
+			let disc;
+			let ghost_disc;
+			let annulus_texture;
+			let retract_texture;
+			let switch_bool_disc_annulus = false;
+
+			let switch_bool_do_deform = false;
+			let switch_bool_do_twist_1 = false;
+			// let switch_bool_do_twist_2 = false;
+			let switch_bool_do_twist_3 = false;
+
+			let switch_bool_do_deform_reset_done = true;
+			let switch_bool_do_twist_1_reset_done = true;
+			// let switch_bool_do_twist_2_reset_done = true;
+			let switch_bool_do_twist_3_reset_done = true;
+
+			const colour_white = 0xFFFFFF;
+			const colour_blue = 0x0000FF;
+			const colour_red = 0xFF0000;
+			const colour_blue_gray = 0x51667a;
+			const colour_black = 0x000000;
+
+			let curr_height_disc = 0.0;
+			let curr_twist_strength_1 = 0.0;
+			// let curr_twist_strength_2 = 0.0;
+			let curr_twist_strength_3 = 0.0;
+			let curr_retract = 0.0;
+			const disc_radius = 5.0;
+			const disc_radius_ghost = 1.2 * disc_radius;
+			const annulus_rel_inner_rad = 0.3;
+			const min_leftover_pixels_retract = 2;
+
+			init();
+			animate();
+
+			function init() {
+				camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 200);
+				camera.position.set(10, 5, 20);
+				camera.layers.enableAll();
+
+				// stats about fps on the website (frames-per-second)
+				stats = Stats();
+				document.body.appendChild( stats.dom );
+
+				scene = new THREE.Scene();
+
+				const dirLight = new THREE.DirectionalLight( 0xffffff );
+				dirLight.position.set( 0, 0, 1 );
+				dirLight.layers.enableAll();
+				scene.add( dirLight );
+
+				const intensity = 1;
+				const light_amb = new THREE.AmbientLight(colour_white, intensity);
+				light_amb.layers.enableAll();
+				scene.add(light_amb);
+
+				const axesHelper = new THREE.AxesHelper(5);
+				axesHelper.layers.set(1);
+				scene.add(axesHelper);
+				camera.layers.toggle(1);
+
+				renderer = new THREE.WebGLRenderer({antialias: true});
+				renderer.setPixelRatio(window.devicePixelRatio);
+				renderer.setSize(window.innerWidth, window.innerHeight);
+				renderer.setClearColor(0x000000);
+				document.body.appendChild(renderer.domElement);
+
+				const controls = new OrbitControls(camera, renderer.domElement);
+				controls.minDistance = 5;
+				controls.maxDistance = 100;
+
+				// Add Window-Resizer
+				window.addEventListener('resize', onWindowResize);
+
+				initGui();
+				createAnnulusAlphaMap();
+				initDiscDeform();
+				initGhostDisc();
+				camera.layers.toggle(2);
+			}
+
+			function createAnnulusAlphaMap() {
+				// Create the alphaMap texture to display an annulus
+				// Alpha map needs an "image", black corresponds to totally transparent, white to fully opaque.
+				var canvas = document.createElement('canvas'),
+				ctx = canvas.getContext('2d');
+				const canvas_dims = 256;
+				canvas.width = canvas_dims;
+				canvas.height = canvas_dims;
+				// drawing gray scale areas
+				var annulus_inner_rad_int = Math.round(canvas_dims * annulus_rel_inner_rad);
+
+				ctx.fillStyle = '#FFFFFF';
+				ctx.fillRect(0, 0, canvas_dims, canvas_dims); // arguments (x,y,width,height)
+				ctx.fillStyle = '#000000';
+				ctx.fillRect(canvas_dims - annulus_inner_rad_int, 0, annulus_inner_rad_int, canvas_dims);
+				annulus_texture = new THREE.CanvasTexture(canvas);
+				annulus_texture.wrapS = annulus_texture.wrapT = THREE.RepeatWrapping;
+
+				// turn off interpolation for the texture
+				annulus_texture.magFilter = THREE.NearestFilter;
+				annulus_texture.minFilter = THREE.NearestFilter;
+
+				// for more "Minecraft" look
+				// annulus_texture.minFilter = THREE.LinearMipMapLinearFilter;
+			}
+
+			function createRetractAlphaMap() {
+				// Create the alphaMap texture to display an annulus
+				// Alpha map needs an "image", black corresponds to totally transparent, white to fully opaque.
+				var canvas = document.createElement('canvas'),
+				ctx = canvas.getContext('2d');
+				const canvas_dims = 256;
+				canvas.width = canvas_dims;
+				canvas.height = canvas_dims;
+				// drawing gray scale areas
+				var annulus_inner_rad_int = Math.round(canvas_dims * annulus_rel_inner_rad);
+				var retract_radius_int = Math.round(canvas_dims * curr_retract);
+
+				if (switch_bool_disc_annulus == true) {
+					if (retract_radius_int >= canvas_dims - annulus_inner_rad_int - min_leftover_pixels_retract) {
+						retract_radius_int = canvas_dims - annulus_inner_rad_int - min_leftover_pixels_retract;
+					}
+				} else {
+					if (retract_radius_int >= canvas_dims - min_leftover_pixels_retract) {
+						retract_radius_int = canvas_dims - min_leftover_pixels_retract;
+					}
+				}
+
+				ctx.fillStyle = '#FFFFFF';
+				ctx.fillRect(0, 0, canvas_dims, canvas_dims); // arguments (x,y,width,height)
+
+				ctx.fillStyle = '#000000';
+				ctx.fillRect(0, 0, retract_radius_int, canvas_dims);
+
+				if (switch_bool_disc_annulus == true) {
+					ctx.fillStyle = '#000000';
+					ctx.fillRect(canvas_dims - annulus_inner_rad_int, 0, annulus_inner_rad_int, canvas_dims);
+				}
+				retract_texture = new THREE.CanvasTexture(canvas);
+				retract_texture.wrapS = retract_texture.wrapT = THREE.RepeatWrapping;
+
+				// turn off interpolation for the texture
+				retract_texture.magFilter = THREE.NearestFilter;
+				retract_texture.minFilter = THREE.NearestFilter;
+
+				// for more "Minecraft" look
+				// retract_texture.minFilter = THREE.LinearMipMapLinearFilter;
+			}
+
+			// Initialize earth, spacecrafts, lasers, and orbit trails
+			function initDiscDeform() {
+				const mesh_fun_disc_sphere = function(u, v, target) {
+
+	                const x = Math.sin(Math.PI * u / 2.0 + Math.PI / 2.0) * Math.cos(2.0 * Math.PI * v) * disc_radius;
+	                const z = Math.sin(Math.PI * u / 2.0 + Math.PI / 2.0) * Math.sin(2.0 * Math.PI * v) * disc_radius;
+	                const y = -Math.cos(Math.PI * u / 2.0 + Math.PI / 2.0) * curr_height_disc * disc_radius;
+
+				    target.set(x, y, z);
+	            };
+
+				const this_material2 = new THREE.MeshPhysicalMaterial( { color: 0xff0000, metalness: 0.5, roughness: 0.1, clearcoat: 1.0, side: THREE.DoubleSide } );
+
+				const this_material_annulus = new THREE.MeshPhysicalMaterial( { color: 0xff0000, side: THREE.DoubleSide, alphaMap: annulus_texture, transparent: true, opacity: 1.0, metalness: 0.5, roughness: 0.1, clearcoat: 1.0 } );
+
+				let this_material_retract;
+				if (curr_retract != 0.0) {
+					createRetractAlphaMap();
+					this_material_retract = new THREE.MeshPhysicalMaterial( { color: 0xff0000, side: THREE.DoubleSide, alphaMap: retract_texture, transparent: true, opacity: 1.0, metalness: 0.5, roughness: 0.1, clearcoat: 1.0 } );
+				}
+
+				const disc_geo = new ParametricGeometry(mesh_fun_disc_sphere, 30, 80);
+
+				if (curr_retract != 0.0) {
+					disc = new THREE.Mesh(disc_geo, this_material_retract);
+				} else {
+					if (switch_bool_disc_annulus == false) {
+						disc = new THREE.Mesh(disc_geo, this_material2);
+					} else {
+						disc = new THREE.Mesh(disc_geo, this_material_annulus);
+					}
+				}
+	            scene.add(disc);
+
+				disc.layers.enableAll();
+			}
+
+			function initDiscTwist() {
+				const mesh_fun_disc_sphere = function(u, v, target) {
+
+	                const x = Math.sin(Math.PI * u / 2.0 + Math.PI / 2.0) * Math.cos(2.0 * Math.PI * v) * disc_radius;
+	                const z = Math.sin(Math.PI * u / 2.0 + Math.PI / 2.0) * Math.sin(2.0 * Math.PI * v) * disc_radius;
+					const this_r = Math.sqrt(x*x + z*z);
+					let y;
+					if (v > 0.5) {
+						y = Math.sin(Math.PI * this_r / disc_radius) * Math.cos(2.0 * Math.PI * (v - 0.5)) * curr_twist_strength_1 * disc_radius;
+					} else {
+						y = -Math.sin(Math.PI * this_r / disc_radius) * Math.cos(2.0 * Math.PI * v) * curr_twist_strength_1 * disc_radius;
+					}
+
+				    target.set(x, y, z);
+	            };
+
+				const this_material2 = new THREE.MeshPhysicalMaterial( { color: 0xff0000, metalness: 0.5, roughness: 0.1, clearcoat: 1.0, side: THREE.DoubleSide } );
+
+				const this_material_annulus = new THREE.MeshPhysicalMaterial( { color: 0xff0000, side: THREE.DoubleSide, alphaMap: annulus_texture, transparent: true, opacity: 1.0, metalness: 0.5, roughness: 0.1, clearcoat: 1.0 } );
+
+				let this_material_retract;
+				if (curr_retract != 0.0) {
+					createRetractAlphaMap();
+					this_material_retract = new THREE.MeshPhysicalMaterial( { color: 0xff0000, side: THREE.DoubleSide, alphaMap: retract_texture, transparent: true, opacity: 1.0, metalness: 0.5, roughness: 0.1, clearcoat: 1.0 } );
+				}
+
+				const disc_geo = new ParametricGeometry(mesh_fun_disc_sphere, 30, 80);
+
+				if (curr_retract != 0.0) {
+					disc = new THREE.Mesh(disc_geo, this_material_retract);
+				} else {
+					if (switch_bool_disc_annulus == false) {
+						disc = new THREE.Mesh(disc_geo, this_material2);
+					} else {
+						disc = new THREE.Mesh(disc_geo, this_material_annulus);
+					}
+				}
+	            scene.add(disc);
+
+				disc.layers.enableAll();
+			}
+
+			// function initDiscTwist2() {
+			// 	const mesh_fun_disc_sphere = function(u, v, target) {
+			//
+	        //         const x = Math.sin(Math.PI * u / 2.0 + Math.PI / 2.0) * Math.cos(2.0 * Math.PI * v) * disc_radius;
+	        //         const z = Math.sin(Math.PI * u / 2.0 + Math.PI / 2.0) * Math.sin(2.0 * Math.PI * v) * disc_radius;
+			// 		const this_r = Math.sqrt(x*x + z*z);
+			// 		let y;
+			// 		if (v > 0.5) {
+			// 			y = -Math.sin(Math.PI * this_r / disc_radius) * Math.cos(4.0 * Math.PI * (v - 0.5)) * curr_twist_strength_2 * disc_radius;
+			// 		} else {
+			// 			y = -Math.sin(Math.PI * this_r / disc_radius) * Math.cos(4.0 * Math.PI * v) * curr_twist_strength_2 * disc_radius;
+			// 		}
+			//
+			// 	    target.set(x, y, z);
+	        //     };
+			//
+			// 	// const this_material = new THREE.MeshPhongMaterial({
+			// 	// 	map: map,
+			// 	// 	side: THREE.DoubleSide
+			// 	// });
+			//
+			// 	const this_material2 = new THREE.MeshPhysicalMaterial( { color: 0xff0000, metalness: 0.5, roughness: 0.1, clearcoat: 1.0, side: THREE.DoubleSide } );
+			//
+			// 	const this_material_annulus = new THREE.MeshPhysicalMaterial( { color: 0xff0000, side: THREE.DoubleSide, alphaMap: annulus_texture, transparent: true, opacity: 1.0, metalness: 0.5, roughness: 0.1, clearcoat: 1.0 } );
+			//
+			// 	let this_material_retract;
+			// 	if (curr_retract != 0.0) {
+			// 		createRetractAlphaMap();
+			// 		this_material_retract = new THREE.MeshPhysicalMaterial( { color: 0xff0000, side: THREE.DoubleSide, alphaMap: retract_texture, transparent: true, opacity: 1.0, metalness: 0.5, roughness: 0.1, clearcoat: 1.0 } );
+			// 	}
+			//
+			// 	const disc_geo = new ParametricGeometry(mesh_fun_disc_sphere, 30, 80);
+			//
+			// 	if (curr_retract != 0.0) {
+			// 		disc = new THREE.Mesh(disc_geo, this_material_retract);
+			// 	} else {
+			// 		if (switch_bool_disc_annulus == false) {
+			// 			disc = new THREE.Mesh(disc_geo, this_material2);
+			// 		} else {
+			// 			disc = new THREE.Mesh(disc_geo, this_material_annulus);
+			// 		}
+			// 	}
+	        //     scene.add(disc);
+			//
+			// 	disc.layers.enableAll();
+			// }
+
+			function initDiscTwist3() {
+				const mesh_fun_disc_sphere = function(u, v, target) {
+
+	                const x = Math.sin(Math.PI * u / 2.0 + Math.PI / 2.0) * Math.cos(2.0 * Math.PI * v) * disc_radius;
+	                const z = Math.sin(Math.PI * u / 2.0 + Math.PI / 2.0) * Math.sin(2.0 * Math.PI * v) * disc_radius;
+					const this_r = Math.sqrt(x*x + z*z);
+					let y;
+					if (v > 0.5) {
+						y = (Math.sin(Math.PI * this_r / disc_radius) * Math.cos(2.0 * Math.PI * (v - 0.5)) + this_r / disc_radius * Math.sin(4.0 * Math.PI * (v - 0.5))) * curr_twist_strength_3 * disc_radius;
+					} else {
+						y = -(Math.sin(Math.PI * this_r / disc_radius) * Math.cos(2.0 * Math.PI * v) - this_r / disc_radius * Math.sin(4.0 * Math.PI * v)) * curr_twist_strength_3 * disc_radius;
+					}
+
+				    target.set(x, y, z);
+	            };
+
+				const this_material2 = new THREE.MeshPhysicalMaterial( { color: 0xff0000, metalness: 0.5, roughness: 0.1, clearcoat: 1.0, side: THREE.DoubleSide } );
+
+				const this_material_annulus = new THREE.MeshPhysicalMaterial( { color: 0xff0000, side: THREE.DoubleSide, alphaMap: annulus_texture, transparent: true, opacity: 1.0, metalness: 0.5, roughness: 0.1, clearcoat: 1.0 } );
+
+				let this_material_retract;
+				if (curr_retract != 0.0) {
+					createRetractAlphaMap();
+					this_material_retract = new THREE.MeshPhysicalMaterial( { color: 0xff0000, side: THREE.DoubleSide, alphaMap: retract_texture, transparent: true, opacity: 1.0, metalness: 0.5, roughness: 0.1, clearcoat: 1.0 } );
+				}
+
+				const disc_geo = new ParametricGeometry(mesh_fun_disc_sphere, 30, 80);
+
+				if (curr_retract != 0.0) {
+					disc = new THREE.Mesh(disc_geo, this_material_retract);
+				} else {
+					if (switch_bool_disc_annulus == false) {
+						disc = new THREE.Mesh(disc_geo, this_material2);
+					} else {
+						disc = new THREE.Mesh(disc_geo, this_material_annulus);
+					}
+				}
+	            scene.add(disc);
+
+				disc.layers.enableAll();
+			}
+
+			function initGhostDisc() {
+				const mesh_fun_disc_sphere = function(u, v, target) {
+
+	                const x = Math.sin(Math.PI * u / 2.0 + Math.PI / 2.0) * Math.cos(2.0 * Math.PI * v) * disc_radius_ghost;
+	                const z = Math.sin(Math.PI * u / 2.0 + Math.PI / 2.0) * Math.sin(2.0 * Math.PI * v) * disc_radius_ghost;
+	                const y = 0.0;
+
+				    target.set(x, y, z);
+	            };
+
+				const this_material3 = new THREE.MeshBasicMaterial({
+					color: colour_red,
+					side: THREE.DoubleSide,
+					opacity: 0.2,
+					transparent: true
+				});
+
+				const this_material2 = new THREE.MeshPhysicalMaterial( { color: colour_blue, metalness: 0.5, roughness: 0.1, clearcoat: 1.0, side: THREE.DoubleSide } );
+
+				const disc_geo = new ParametricGeometry(mesh_fun_disc_sphere, 30, 80);
+	            ghost_disc = new THREE.Mesh(disc_geo, this_material3);
+	            scene.add(ghost_disc);
+
+				ghost_disc.layers.set(2);
+			}
+
+			// Function to resize inner window in case it is necessary
+			function onWindowResize() {
+				camera.aspect = window.innerWidth / window.innerHeight;
+				camera.updateProjectionMatrix();
+				renderer.setSize(window.innerWidth, window.innerHeight);
+			}
+
+			// Main function that controls the animation
+			function animate() {
+				requestAnimationFrame(animate);
+
+				// Render the scene
+				renderer.render(scene, camera);
+				stats.update()
+			}
+
+			// Remove sun from scene
+			function dispose_disc() {
+				disc.geometry.dispose();
+				disc.material.dispose();
+				scene.remove(disc);
+			}
+
+			function initGui() {
+				gui = new GUI();
+
+				const deform_param = {
+					deform: curr_height_disc,
+					twist: curr_twist_strength_1,
+					// twist2: curr_twist_strength_2,
+					twist3: curr_twist_strength_3,
+					retract: curr_retract
+				};
+
+				const obj_param = {
+					'Toggle Object': function () {
+						if (switch_bool_disc_annulus == false) {
+							switch_bool_disc_annulus = true;
+						} else {
+							switch_bool_disc_annulus = false;
+						}
+						// Reset all sliders to zero
+						switch_bool_do_deform = true;
+						switch_bool_do_twist_1 = false;
+						// switch_bool_do_twist_2 = false;
+						switch_bool_do_twist_3 = false;
+
+						switch_bool_do_deform_reset_done = false;
+						switch_bool_do_twist_1_reset_done = false;
+						// switch_bool_do_twist_2_reset_done = false;
+						switch_bool_do_twist_3_reset_done = false;
+
+						gui.folders[1].children[0].setValue(0.0);
+						gui.folders[1].children[1].setValue(0.0);
+						gui.folders[1].children[2].setValue(0.0);
+						gui.folders[1].children[3].setValue(0.0);
+						// gui.folders[1].children[4].setValue(0.0);
+
+						dispose_disc();
+						initDiscDeform();
+					},
+					'Toggle Ghost': function () {
+						camera.layers.toggle(2);
+					},
+					'Toggle Axes': function () {
+						camera.layers.toggle(1);
+					}
+				};
+
+				const obj_folder = gui.addFolder('Objects');
+				const deform_folder = gui.addFolder('Deformations');
+
+				obj_folder.add(obj_param, 'Toggle Object').name('toggle disc/annulus');
+				obj_folder.add(obj_param, 'Toggle Ghost').name('toggle background disc');
+				obj_folder.add(obj_param, 'Toggle Axes').name('toggle axes');
+
+				deform_folder.add(deform_param, 'deform', -1.0, 1.0, 0.01).name('deform')
+				.setValue(curr_height_disc)
+        		.onChange(onChangeHeightDisc);
+
+				deform_folder.add(deform_param, 'twist', -1.0, 1.0, 0.01).name('twist')
+				.setValue(curr_twist_strength_1)
+        		.onChange(onChangeStrengthTwist);
+
+				// deform_folder.add(deform_param, 'twist2', -1.0, 1.0, 0.01).name('twist2')
+				// .setValue(curr_twist_strength_2)
+        		// .onChange(onChangeStrengthTwist2);
+
+				deform_folder.add(deform_param, 'twist3', -1.0, 1.0, 0.01).name('twist2')
+				.setValue(curr_twist_strength_3)
+        		.onChange(onChangeStrengthTwist3);
+
+				deform_folder.add(deform_param, 'retract', 0.0, 1.0, 0.01).name('retract')
+				.setValue(curr_retract)
+        		.onChange(onChangeRetract);
+
+				obj_folder.open();
+				deform_folder.open();
+			}
+
+			function onChangeHeightDisc(this_height_disc) {
+				// if this is not just a reset
+				if (Math.abs(this_height_disc) != 0.0) {
+					switch_bool_do_deform = true;
+					switch_bool_do_twist_1 = false;
+					// switch_bool_do_twist_2 = false;
+					switch_bool_do_twist_3 = false;
+
+					switch_bool_do_deform_reset_done = false;
+					switch_bool_do_twist_1_reset_done = false;
+					// switch_bool_do_twist_2_reset_done = false;
+					switch_bool_do_twist_3_reset_done = false;
+				}
+				if (switch_bool_do_twist_1 == false && switch_bool_do_twist_1_reset_done == false) {
+					switch_bool_do_twist_1_reset_done = true;
+					gui.folders[1].children[1].setValue(0.0);
+				}
+				// if (switch_bool_do_twist_2 == false && switch_bool_do_twist_2_reset_done == false) {
+				// 	switch_bool_do_twist_2_reset_done = true;
+				// 	gui.folders[1].children[2].setValue(0.0);
+				// }
+				if (switch_bool_do_twist_3 == false && switch_bool_do_twist_3_reset_done == false) {
+					switch_bool_do_twist_3_reset_done = true;
+					gui.folders[1].children[2].setValue(0.0);
+				}
+
+				// Actually change the displayed model
+				if (curr_height_disc != this_height_disc && switch_bool_do_deform == true) {
+	      			curr_height_disc = this_height_disc;
+
+					dispose_disc();
+					initDiscDeform();
+				}
+    		}
+
+			function onChangeStrengthTwist(this_twist_strength) {
+				// if this is not just a reset
+				if (Math.abs(this_twist_strength) != 0.0) {
+					switch_bool_do_deform = false;
+					switch_bool_do_twist_1 = true;
+					// switch_bool_do_twist_2 = false;
+					switch_bool_do_twist_3 = false;
+
+					switch_bool_do_deform_reset_done = false;
+					switch_bool_do_twist_1_reset_done = false;
+					// switch_bool_do_twist_2_reset_done = false;
+					switch_bool_do_twist_3_reset_done = false;
+				}
+				if (switch_bool_do_deform == false && switch_bool_do_deform_reset_done == false) {
+					switch_bool_do_deform_reset_done = true;
+					gui.folders[1].children[0].setValue(0.0);
+				}
+				// if (switch_bool_do_twist_2 == false && switch_bool_do_twist_2_reset_done == false) {
+				// 	switch_bool_do_twist_2_reset_done = true;
+				// 	gui.folders[1].children[2].setValue(0.0);
+				// }
+				if (switch_bool_do_twist_3 == false && switch_bool_do_twist_3_reset_done == false) {
+					switch_bool_do_twist_3_reset_done = true;
+					gui.folders[1].children[2].setValue(0.0);
+				}
+
+				// Actually change the displayed model
+				if (curr_twist_strength_1 != this_twist_strength && switch_bool_do_twist_1 == true) {
+	      			curr_twist_strength_1 = this_twist_strength;
+
+					dispose_disc();
+					initDiscTwist();
+				}
+    		}
+
+			// function onChangeStrengthTwist2(this_twist_strength) {
+			// 	// if this is not just a reset
+			// 	if (Math.abs(this_twist_strength) != 0.0) {
+			// 		switch_bool_do_deform = false;
+			// 		switch_bool_do_twist_1 = false;
+			// 		switch_bool_do_twist_2 = true;
+			// 		switch_bool_do_twist_3 = false;
+			//
+			// 		switch_bool_do_deform_reset_done = false;
+			// 		switch_bool_do_twist_1_reset_done = false;
+			// 		switch_bool_do_twist_2_reset_done = false;
+			// 		switch_bool_do_twist_3_reset_done = false;
+			// 	}
+			// 	if (switch_bool_do_deform == false && switch_bool_do_deform_reset_done == false) {
+			// 		switch_bool_do_deform_reset_done = true;
+			// 		gui.folders[1].children[0].setValue(0.0);
+			// 	}
+			// 	if (switch_bool_do_twist_1 == false && switch_bool_do_twist_1_reset_done == false) {
+			// 		switch_bool_do_twist_1_reset_done = true;
+			// 		gui.folders[1].children[1].setValue(0.0);
+			// 	}
+			// 	if (switch_bool_do_twist_3 == false && switch_bool_do_twist_3_reset_done == false) {
+			// 		switch_bool_do_twist_3_reset_done = true;
+			// 		gui.folders[1].children[3].setValue(0.0);
+			// 	}
+			//
+			// 	// Actually change the displayed model
+			// 	if (curr_twist_strength_2 != this_twist_strength && switch_bool_do_twist_2 == true) {
+	      	// 		curr_twist_strength_2 = this_twist_strength;
+			//
+			// 		dispose_disc();
+			// 		initDiscTwist2();
+			// 	}
+    		// }
+
+			function onChangeStrengthTwist3(this_twist_strength) {
+				// if this is not just a reset
+				if (Math.abs(this_twist_strength) != 0.0) {
+					switch_bool_do_deform = false;
+					switch_bool_do_twist_1 = false;
+					// switch_bool_do_twist_2 = false;
+					switch_bool_do_twist_3 = true;
+
+					switch_bool_do_deform_reset_done = false;
+					switch_bool_do_twist_1_reset_done = false;
+					// switch_bool_do_twist_2_reset_done = false;
+					switch_bool_do_twist_3_reset_done = false;
+				}
+				if (switch_bool_do_deform == false && switch_bool_do_deform_reset_done == false) {
+					switch_bool_do_deform_reset_done = true;
+					gui.folders[1].children[0].setValue(0.0);
+				}
+				if (switch_bool_do_twist_1 == false && switch_bool_do_twist_1_reset_done == false) {
+					switch_bool_do_twist_1_reset_done = true;
+					gui.folders[1].children[1].setValue(0.0);
+				}
+				// if (switch_bool_do_twist_2 == false && switch_bool_do_twist_2_reset_done == false) {
+				// 	switch_bool_do_twist_2_reset_done = true;
+				// 	gui.folders[1].children[2].setValue(0.0);
+				// }
+
+				// Actually change the displayed model
+				if (curr_twist_strength_3 != this_twist_strength && switch_bool_do_twist_3 == true) {
+	      			curr_twist_strength_3 = this_twist_strength;
+
+					dispose_disc();
+					initDiscTwist3();
+				}
+    		}
+
+			function onChangeRetract(this_retract) {
+				if (curr_retract != this_retract) {
+	      			curr_retract = this_retract;
+
+					dispose_disc();
+
+					if (switch_bool_do_twist_1 == true) {
+						initDiscTwist();
+					// } else if (switch_bool_do_twist_2 == true) {
+					// 	initDiscTwist2();
+					} else if (switch_bool_do_twist_3 == true) {
+						initDiscTwist3();
+					} else {
+						initDiscDeform();
+					}
+				}
+    		}
+
+
+		</script>
+
+		<div id="simulationcredits" class="author">Author: Ricardo Waibel, <a href="https://www.thphys.uni-heidelberg.de">ITP</a>, <a href="https://hegl.mathi.uni-heidelberg.de">HEGL</a>.</div>
+	</body>
+</html>
