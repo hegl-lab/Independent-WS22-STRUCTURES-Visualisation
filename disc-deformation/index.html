@@ -104,7 +104,7 @@
 				scene = new THREE.Scene();
 
 				const dirLight = new THREE.DirectionalLight( 0xffffff );
-				dirLight.position.set( 0, 0, 1 );
+				dirLight.position.set( 0, 1, 1 );
 				dirLight.layers.enableAll();
 				scene.add( dirLight );
 
@@ -121,7 +121,7 @@
 				renderer = new THREE.WebGLRenderer({antialias: true});
 				renderer.setPixelRatio(window.devicePixelRatio);
 				renderer.setSize(window.innerWidth, window.innerHeight);
-				renderer.setClearColor(0x000000);
+				renderer.setClearColor(0x605ae8);
 				document.body.appendChild(renderer.domElement);
 
 				const controls = new OrbitControls(camera, renderer.domElement);
