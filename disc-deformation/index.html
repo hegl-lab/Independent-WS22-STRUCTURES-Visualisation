@@ -59,8 +59,6 @@
 			let stats;
 			let disc;
 			let ghost_disc;
-			let annulus_texture;
-			let retract_texture;
 			let switch_bool_disc_annulus = false;
 
 			let switch_bool_do_deform = false;
@@ -132,113 +130,38 @@
 				window.addEventListener('resize', onWindowResize);
 
 				initGui();
-				createAnnulusAlphaMap();
 				initDiscDeform();
 				initGhostDisc();
 				camera.layers.toggle(2);
-			}
-
-			function createAnnulusAlphaMap() {
-				// Create the alphaMap texture to display an annulus
-				// Alpha map needs an "image", black corresponds to totally transparent, white to fully opaque.
-				var canvas = document.createElement('canvas'),
-				ctx = canvas.getContext('2d');
-				const canvas_dims = 256;
-				canvas.width = canvas_dims;
-				canvas.height = canvas_dims;
-				// drawing gray scale areas
-				var annulus_inner_rad_int = Math.round(canvas_dims * annulus_rel_inner_rad);
-
-				ctx.fillStyle = '#FFFFFF';
-				ctx.fillRect(0, 0, canvas_dims, canvas_dims); // arguments (x,y,width,height)
-				ctx.fillStyle = '#000000';
-				ctx.fillRect(canvas_dims - annulus_inner_rad_int, 0, annulus_inner_rad_int, canvas_dims);
-				annulus_texture = new THREE.CanvasTexture(canvas);
-				annulus_texture.wrapS = annulus_texture.wrapT = THREE.RepeatWrapping;
-
-				// turn off interpolation for the texture
-				annulus_texture.magFilter = THREE.NearestFilter;
-				annulus_texture.minFilter = THREE.NearestFilter;
-
-				// for more "Minecraft" look
-				// annulus_texture.minFilter = THREE.LinearMipMapLinearFilter;
-			}
-
-			function createRetractAlphaMap() {
-				// Create the alphaMap texture to display an annulus
-				// Alpha map needs an "image", black corresponds to totally transparent, white to fully opaque.
-				var canvas = document.createElement('canvas'),
-				ctx = canvas.getContext('2d');
-				const canvas_dims = 256;
-				canvas.width = canvas_dims;
-				canvas.height = canvas_dims;
-				// drawing gray scale areas
-				var annulus_inner_rad_int = Math.round(canvas_dims * annulus_rel_inner_rad);
-				var retract_radius_int = Math.round(canvas_dims * curr_retract);
-
-				if (switch_bool_disc_annulus == true) {
-					if (retract_radius_int >= canvas_dims - annulus_inner_rad_int - min_leftover_pixels_retract) {
-						retract_radius_int = canvas_dims - annulus_inner_rad_int - min_leftover_pixels_retract;
-					}
-				} else {
-					if (retract_radius_int >= canvas_dims - min_leftover_pixels_retract) {
-						retract_radius_int = canvas_dims - min_leftover_pixels_retract;
-					}
-				}
-
-				ctx.fillStyle = '#FFFFFF';
-				ctx.fillRect(0, 0, canvas_dims, canvas_dims); // arguments (x,y,width,height)
-
-				ctx.fillStyle = '#000000';
-				ctx.fillRect(0, 0, retract_radius_int, canvas_dims);
-
-				if (switch_bool_disc_annulus == true) {
-					ctx.fillStyle = '#000000';
-					ctx.fillRect(canvas_dims - annulus_inner_rad_int, 0, annulus_inner_rad_int, canvas_dims);
-				}
-				retract_texture = new THREE.CanvasTexture(canvas);
-				retract_texture.wrapS = retract_texture.wrapT = THREE.RepeatWrapping;
-
-				// turn off interpolation for the texture
-				retract_texture.magFilter = THREE.NearestFilter;
-				retract_texture.minFilter = THREE.NearestFilter;
-
-				// for more "Minecraft" look
-				// retract_texture.minFilter = THREE.LinearMipMapLinearFilter;
 			}
 
 			// Initialize earth, spacecrafts, lasers, and orbit trails
 			function initDiscDeform() {
 				const mesh_fun_disc_sphere = function(u, v, target) {
 
-	                const x = Math.sin(Math.PI * u / 2.0 + Math.PI / 2.0) * Math.cos(2.0 * Math.PI * v) * disc_radius;
-	                const z = Math.sin(Math.PI * u / 2.0 + Math.PI / 2.0) * Math.sin(2.0 * Math.PI * v) * disc_radius;
-	                const y = -Math.cos(Math.PI * u / 2.0 + Math.PI / 2.0) * curr_height_disc * disc_radius;
+					let this_u;
+					var this_curr_retract = curr_retract;
+					if (this_curr_retract == 1.0) {
+						this_curr_retract = 0.99;
+					}
+					if (switch_bool_disc_annulus == false) {
+						this_u = u * (1.0 - this_curr_retract) + this_curr_retract;
+					} else {
+						this_u = (u * (1.0 - this_curr_retract) + this_curr_retract) * (1.0 - annulus_rel_inner_rad);
+					}
+
+	                const x = Math.sin(Math.PI * this_u / 2.0 + Math.PI / 2.0) * Math.cos(2.0 * Math.PI * v) * disc_radius;
+	                const z = Math.sin(Math.PI * this_u / 2.0 + Math.PI / 2.0) * Math.sin(2.0 * Math.PI * v) * disc_radius;
+	                const y = -Math.cos(Math.PI * this_u / 2.0 + Math.PI / 2.0) * curr_height_disc * disc_radius;
 
 				    target.set(x, y, z);
 	            };
 
 				const this_material2 = new THREE.MeshPhysicalMaterial( { color: 0xff0000, metalness: 0.5, roughness: 0.1, clearcoat: 1.0, side: THREE.DoubleSide } );
 
-				const this_material_annulus = new THREE.MeshPhysicalMaterial( { color: 0xff0000, side: THREE.DoubleSide, alphaMap: annulus_texture, transparent: true, opacity: 1.0, metalness: 0.5, roughness: 0.1, clearcoat: 1.0 } );
-
-				let this_material_retract;
-				if (curr_retract != 0.0) {
-					createRetractAlphaMap();
-					this_material_retract = new THREE.MeshPhysicalMaterial( { color: 0xff0000, side: THREE.DoubleSide, alphaMap: retract_texture, transparent: true, opacity: 1.0, metalness: 0.5, roughness: 0.1, clearcoat: 1.0 } );
-				}
-
 				const disc_geo = new ParametricGeometry(mesh_fun_disc_sphere, 30, 80);
 
-				if (curr_retract != 0.0) {
-					disc = new THREE.Mesh(disc_geo, this_material_retract);
-				} else {
-					if (switch_bool_disc_annulus == false) {
-						disc = new THREE.Mesh(disc_geo, this_material2);
-					} else {
-						disc = new THREE.Mesh(disc_geo, this_material_annulus);
-					}
-				}
+				disc = new THREE.Mesh(disc_geo, this_material2);
 	            scene.add(disc);
 
 				disc.layers.enableAll();
@@ -247,8 +170,19 @@
 			function initDiscTwist() {
 				const mesh_fun_disc_sphere = function(u, v, target) {
 
-	                const x = Math.sin(Math.PI * u / 2.0 + Math.PI / 2.0) * Math.cos(2.0 * Math.PI * v) * disc_radius;
-	                const z = Math.sin(Math.PI * u / 2.0 + Math.PI / 2.0) * Math.sin(2.0 * Math.PI * v) * disc_radius;
+					let this_u;
+					var this_curr_retract = curr_retract;
+					if (this_curr_retract == 1.0) {
+						this_curr_retract = 0.99;
+					}
+					if (switch_bool_disc_annulus == false) {
+						this_u = u * (1.0 - this_curr_retract) + this_curr_retract;
+					} else {
+						this_u = (u * (1.0 - this_curr_retract) + this_curr_retract) * (1.0 - annulus_rel_inner_rad);
+					}
+
+	                const x = Math.sin(Math.PI * this_u / 2.0 + Math.PI / 2.0) * Math.cos(2.0 * Math.PI * v) * disc_radius;
+	                const z = Math.sin(Math.PI * this_u / 2.0 + Math.PI / 2.0) * Math.sin(2.0 * Math.PI * v) * disc_radius;
 					const this_r = Math.sqrt(x*x + z*z);
 					let y;
 					if (v > 0.5) {
@@ -262,25 +196,9 @@
 
 				const this_material2 = new THREE.MeshPhysicalMaterial( { color: 0xff0000, metalness: 0.5, roughness: 0.1, clearcoat: 1.0, side: THREE.DoubleSide } );
 
-				const this_material_annulus = new THREE.MeshPhysicalMaterial( { color: 0xff0000, side: THREE.DoubleSide, alphaMap: annulus_texture, transparent: true, opacity: 1.0, metalness: 0.5, roughness: 0.1, clearcoat: 1.0 } );
-
-				let this_material_retract;
-				if (curr_retract != 0.0) {
-					createRetractAlphaMap();
-					this_material_retract = new THREE.MeshPhysicalMaterial( { color: 0xff0000, side: THREE.DoubleSide, alphaMap: retract_texture, transparent: true, opacity: 1.0, metalness: 0.5, roughness: 0.1, clearcoat: 1.0 } );
-				}
-
 				const disc_geo = new ParametricGeometry(mesh_fun_disc_sphere, 30, 80);
 
-				if (curr_retract != 0.0) {
-					disc = new THREE.Mesh(disc_geo, this_material_retract);
-				} else {
-					if (switch_bool_disc_annulus == false) {
-						disc = new THREE.Mesh(disc_geo, this_material2);
-					} else {
-						disc = new THREE.Mesh(disc_geo, this_material_annulus);
-					}
-				}
+				disc = new THREE.Mesh(disc_geo, this_material2);
 	            scene.add(disc);
 
 				disc.layers.enableAll();
@@ -336,8 +254,19 @@
 			function initDiscTwist3() {
 				const mesh_fun_disc_sphere = function(u, v, target) {
 
-	                const x = Math.sin(Math.PI * u / 2.0 + Math.PI / 2.0) * Math.cos(2.0 * Math.PI * v) * disc_radius;
-	                const z = Math.sin(Math.PI * u / 2.0 + Math.PI / 2.0) * Math.sin(2.0 * Math.PI * v) * disc_radius;
+					let this_u;
+					var this_curr_retract = curr_retract;
+					if (this_curr_retract == 1.0) {
+						this_curr_retract = 0.99;
+					}
+					if (switch_bool_disc_annulus == false) {
+						this_u = u * (1.0 - this_curr_retract) + this_curr_retract;
+					} else {
+						this_u = (u * (1.0 - this_curr_retract) + this_curr_retract) * (1.0 - annulus_rel_inner_rad);
+					}
+
+	                const x = Math.sin(Math.PI * this_u / 2.0 + Math.PI / 2.0) * Math.cos(2.0 * Math.PI * v) * disc_radius;
+	                const z = Math.sin(Math.PI * this_u / 2.0 + Math.PI / 2.0) * Math.sin(2.0 * Math.PI * v) * disc_radius;
 					const this_r = Math.sqrt(x*x + z*z);
 					let y;
 					if (v > 0.5) {
@@ -351,25 +280,9 @@
 
 				const this_material2 = new THREE.MeshPhysicalMaterial( { color: 0xff0000, metalness: 0.5, roughness: 0.1, clearcoat: 1.0, side: THREE.DoubleSide } );
 
-				const this_material_annulus = new THREE.MeshPhysicalMaterial( { color: 0xff0000, side: THREE.DoubleSide, alphaMap: annulus_texture, transparent: true, opacity: 1.0, metalness: 0.5, roughness: 0.1, clearcoat: 1.0 } );
-
-				let this_material_retract;
-				if (curr_retract != 0.0) {
-					createRetractAlphaMap();
-					this_material_retract = new THREE.MeshPhysicalMaterial( { color: 0xff0000, side: THREE.DoubleSide, alphaMap: retract_texture, transparent: true, opacity: 1.0, metalness: 0.5, roughness: 0.1, clearcoat: 1.0 } );
-				}
-
 				const disc_geo = new ParametricGeometry(mesh_fun_disc_sphere, 30, 80);
 
-				if (curr_retract != 0.0) {
-					disc = new THREE.Mesh(disc_geo, this_material_retract);
-				} else {
-					if (switch_bool_disc_annulus == false) {
-						disc = new THREE.Mesh(disc_geo, this_material2);
-					} else {
-						disc = new THREE.Mesh(disc_geo, this_material_annulus);
-					}
-				}
+				disc = new THREE.Mesh(disc_geo, this_material2);
 	            scene.add(disc);
 
 				disc.layers.enableAll();
